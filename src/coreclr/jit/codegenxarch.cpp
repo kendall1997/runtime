@@ -1065,7 +1065,9 @@ void CodeGen::genCodeForBinary(GenTreeOp* treeNode)
     else
     {
         // when reg3 != reg1 && reg3 != reg2, and NDD is available, we can use APX-EVEX.ND to optimize the codegen.
-        eligibleForNDD = emit->DoJitUseApxNDD(ins);
+        // However, NDD with a memory source operand regresses performance on current APX hardware despite emitting
+        // fewer instructions, so keep NDD only for register/immediate sources and fall back to mov+op
+        eligibleForNDD = emit->DoJitUseApxNDD(ins) && !op2->isUsedFromMemory();
         if (!eligibleForNDD)
         {
             var_types op1Type = op1->TypeGet();

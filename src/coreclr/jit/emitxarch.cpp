@@ -10850,7 +10850,9 @@ regNumber emitter::emitIns_BASE_R_R_RM(
     regNumber r                     = REG_NA;
     assert(regOp->isUsedFromReg());
 
-    bool useApxNdd = DoJitUseApxNDD(ins);
+    // APX NDD with a memory source operand regresses performance on current APX hardware despite emitting fewer
+    // instructions, so avoid NDD when the RM source is memory and fall back to the mov+op sequence.
+    bool useApxNdd = DoJitUseApxNDD(ins) && !rmOp->isUsedFromMemory();
 
     if (emitIns_Mov(INS_mov, attr, targetReg, regOp->GetRegNum(), true, useApxNdd) && useApxNdd)
     {
