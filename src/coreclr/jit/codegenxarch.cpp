@@ -1108,8 +1108,28 @@ void CodeGen::genCodeForBinary(GenTreeOp* treeNode)
         // operands should be already formatted above
         assert(dst->isUsedFromReg());
         assert(op1reg != targetReg);
-        assert(op2reg != targetReg);
-        r = emit->emitIns_BASE_R_R_RM(ins, emitTypeSize(treeNode), targetReg, treeNode, dst, src);
+
+        if (src->isUsedFromMemory())
+        {
+            // APX NDD with a memory RM source regresses performance on current APX hardware, so load the
+            // memory source into the target register and emit a register-only NDD op that reuses the target
+            // register as the RM source (dst == src2); this needs no extra register.
+            //
+            // Load with the source operand's own (GC-aware) type so the target register is reported with the
+            // correct GC-ness between the load and the NDD op.
+            var_types srcType = src->TypeGet();
+            inst_RV_TT(INS_mov, emitTypeSize(src), targetReg, src);
+            regSet.verifyRegUsed(targetReg);
+            gcInfo.gcMarkRegPtrVal(targetReg, srcType);
+
+            emit->emitIns_R_R_R(ins, emitTypeSize(treeNode), targetReg, op1reg, targetReg, INS_OPTS_EVEX_nd);
+            r = targetReg;
+        }
+        else
+        {
+            assert(op2reg != targetReg);
+            r = emit->emitIns_BASE_R_R_RM(ins, emitTypeSize(treeNode), targetReg, treeNode, dst, src);
+        }
     }
     else
     {
@@ -1227,7 +1247,19 @@ void CodeGen::genCodeForMul(GenTreeOp* treeNode)
         }
         assert(regOp->isUsedFromReg());
 
-        emit->emitIns_BASE_R_R_RM(ins, size, mulTargetReg, treeNode, regOp, rmOp);
+        if (emit->DoJitUseApxNDD(ins) && rmOp->isUsedFromMemory() && (mulTargetReg != regOp->GetRegNum()))
+        {
+            // APX NDD with a memory RM source regresses performance on current APX hardware. As in
+            // genCodeForBinary, keep the NDD encoding but avoid the memory operand: load the memory source
+            // into the target register, then emit a register-only NDD multiply that reuses the target
+            // register as the RM source (dst == src2). Multiply is int/long only, so there is no GC concern.
+            inst_RV_TT(INS_mov, size, mulTargetReg, rmOp);
+            emit->emitIns_R_R_R(ins, size, mulTargetReg, regOp->GetRegNum(), mulTargetReg, INS_OPTS_EVEX_nd);
+        }
+        else
+        {
+            emit->emitIns_BASE_R_R_RM(ins, size, mulTargetReg, treeNode, regOp, rmOp);
+        }
 
         // Move the result to the desired register, if necessary
         if (ins == INS_mulEAX)
